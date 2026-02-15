@@ -6,6 +6,8 @@
 
 Real-time High Voltage (HV) current monitor for Toyota Hybrid vehicles, featuring Bluetooth OBD-II connectivity and LCD display.
 
+![Hardware Setup](images/hardware-setup.jpg)
+
 ## 📋 Project Overview
 
 This project reads the High Voltage (HV) battery current from Toyota hybrid vehicles using the OBD-II protocol. Data is retrieved via Bluetooth connection to an ELM327 adapter and displayed on a 1602 I2C LCD screen.
@@ -52,6 +54,11 @@ MAC Address: 98:D3:33:F5:C0:E6  (configurable in line 10)
 PIN Code:    3080                (configurable in line 180)
 Protocol:    ISO 15765-4 (CAN)
 ```
+
+### Hardware Assembly
+
+![LCD Startup Display](images/lcd-startup-display.jpg)
+*LCD display showing startup screen during initialization*
 
 ## 🚗 Supported Vehicles
 
