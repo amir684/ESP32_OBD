@@ -15,6 +15,7 @@ String line;
 static float filtA = 0.0f;
 static float lastA = 0.0f;
 static uint32_t lastDataMs = 0;
+static uint32_t lastElmInit = 0;
 
 // שולח פקודה עם CR
 void sendCmd(const char* cmd, int waitMs = 120) {
@@ -138,7 +139,7 @@ void lcdShow(bool connected) {
   if (hasData) {
     // "I: +12.3A"
     char buf[17];
-    snprintf(buf, sizeof(buf), "I:%+7.1fA      ", lastA);
+    snprintf(buf, sizeof(buf), "I:%7.1fA      ", -lastA);
     lcd.print(buf);
   } else {
     lcd.print("I:   --.-A      ");
@@ -156,9 +157,36 @@ void lcdShow(bool connected) {
     return;
   }
 
-  if (lastA > 0.2f)      lcd.print("DISCHG  OBD:OK  ");
-  else if (lastA < -0.2f) lcd.print("CHG/REG OBD:OK  ");
-  else                  lcd.print("IDLE    OBD:OK  ");
+  if (lastA > 0.2f)      lcd.print("DISCHG    OBD:OK  ");
+  else if (lastA < -0.2f) lcd.print("CHG       OBD:OK  ");
+  else                  lcd.print("IDLE      OBD:OK  ");
+}
+
+// מנסה להתחבר ל-OBD עד שמצליח. מחזיר true כשמחובר.
+bool connectOBD() {
+  int attempt = 0;
+  while (true) {
+    attempt++;
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("BT Connecting...");
+    lcd.setCursor(0, 1);
+    char buf[17];
+    snprintf(buf, sizeof(buf), "Attempt: %d", attempt);
+    lcd.print(buf);
+    Serial.printf("BT connect attempt %d\n", attempt);
+
+    bool ok = SerialBT.connect(OBD_ADDR);
+    if (ok) {
+      Serial.println("BT connected!");
+      return true;
+    }
+
+    Serial.println("BT connect failed, retrying in 3s...");
+    lcd.setCursor(0, 1);
+    lcd.print("Failed, retry...");
+    delay(3000);
+  }
 }
 
 void setup() {
@@ -172,26 +200,16 @@ void setup() {
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("ESP32 OBD...");
-  lcd.setCursor(0, 1);
-  lcd.print("Connecting...");
 
-  // BT init (בווינדוס זה יעבוד לך כ-Master)
+  // BT init
   SerialBT.begin("ESP32-OBD", true);
   SerialBT.setPin("3080");
 
-  bool ok = SerialBT.connect(OBD_ADDR);
-  Serial.printf("connect=%d\n", ok);
-
-  if (!ok) {
-    lcd.clear();
-    lcd.print("BT CONNECT FAIL ");
-    lcd.setCursor(0, 1);
-    lcd.print("check MAC/PIN   ");
-    return;
-  }
+  connectOBD();
 
   delay(400);
   elmInitLikeApp();
+  lastElmInit = millis();
 
   lcd.clear();
   lcd.print("OBD OK");
@@ -205,8 +223,61 @@ void setup() {
 void loop() {
   static uint32_t lastReq = 0;
 
+  // אם נותק - מתחבר מחדש
+  if (!SerialBT.connected()) {
+    Serial.println("BT disconnected! Reconnecting...");
+    lcdShow(false);
+    filtA = 0.0f;
+    lastA = 0.0f;
+    lastDataMs = 0;
+    resetIsoTp();
+    line = "";
+
+    delay(1000);
+    connectOBD();
+    delay(400);
+    elmInitLikeApp();
+    lastElmInit = millis();
+    lastDataMs = 0;
+    lcd.clear();
+    return;
+  }
+
+  // אם מחובר אבל אין דאטה כבר 8 שניות - אתחל ELM מחדש
+  if (lastDataMs > 0 && (millis() - lastDataMs > 8000) && (millis() - lastElmInit > 15000)) {
+    Serial.println("No data for 8s, re-initializing ELM...");
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("No data...");
+    lcd.setCursor(0, 1);
+    lcd.print("Re-init ELM    ");
+    resetIsoTp();
+    line = "";
+    elmInitLikeApp();
+    lastElmInit = millis();
+    lastDataMs = millis(); // רסט הטיימר כדי לתת לו עוד זמן
+    lcd.clear();
+    return;
+  }
+
+  // אם עדיין לא קיבלנו דאטה בכלל אחרי 10 שניות מאתחול
+  if (lastDataMs == 0 && lastElmInit > 0 && (millis() - lastElmInit > 10000)) {
+    Serial.println("Never got data after init, re-initializing ELM...");
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("No response...");
+    lcd.setCursor(0, 1);
+    lcd.print("Re-init ELM    ");
+    resetIsoTp();
+    line = "";
+    elmInitLikeApp();
+    lastElmInit = millis();
+    lcd.clear();
+    return;
+  }
+
   // פולינג
-  if (SerialBT.connected() && millis() - lastReq > 200) {
+  if (millis() - lastReq > 50) {
     lastReq = millis();
     SerialBT.print("221F9A2\r");
   }
@@ -247,14 +318,8 @@ void loop() {
 
   // עדכון LCD
   static uint32_t lastUi = 0;
-  if (millis() - lastUi > 200) {
+  if (millis() - lastUi > 50) {
     lastUi = millis();
     lcdShow(SerialBT.connected());
-  }
-
-  // אם נותק
-  if (!SerialBT.connected()) {
-    lcdShow(false);
-    delay(300);
   }
 }
