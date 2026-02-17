@@ -203,7 +203,7 @@ void setup() {
   lcd.print("ESP32 OBD...");
 
   SerialBT.begin("ESP32-OBD", true);
-  SerialBT.setPin("3080");
+  SerialBT.setPin("3080", 4);
 
   connectOBD();
 
