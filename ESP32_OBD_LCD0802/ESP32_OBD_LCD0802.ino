@@ -1,3 +1,25 @@
+/*
+ * ESP32 OBD-II HV Battery Current Monitor (Arduino IDE version)
+ *
+ * Board: ESP32 Dev Module
+ * LCD: 0802B parallel (4-bit mode)
+ * Libraries required:
+ *   - LiquidCrystal (built-in)
+ *   - BluetoothSerial (built-in with ESP32 board package)
+ *
+ * Wiring (ESP32 -> LCD 0802B):
+ *   RS  -> GPIO 19
+ *   RW  -> GND
+ *   E   -> GPIO 23
+ *   D4  -> GPIO 18
+ *   D5  -> GPIO 17
+ *   D6  -> GPIO 16
+ *   D7  -> GPIO 15
+ *   VSS -> GND
+ *   VDD -> 5V
+ *   V0  -> 10K potentiometer (contrast)
+ */
+
 #include <BluetoothSerial.h>
 #include <LiquidCrystal.h>
 
@@ -11,17 +33,23 @@ uint8_t OBD_ADDR[6] = { 0x98, 0xD3, 0x33, 0xF5, 0xC0, 0xE6 };
 
 String line;
 
-// פילטר עדין
 static float filtA = 0.0f;
 static float lastA = 0.0f;
 static uint32_t lastDataMs = 0;
 static uint32_t lastElmInit = 0;
 
-// שולח פקודה עם CR
 void sendCmd(const char* cmd, int waitMs = 120) {
   SerialBT.print(cmd);
   SerialBT.print("\r");
   delay(waitMs);
+}
+
+// helper for hex nibble parsing
+static int hexNib(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  return -1;
 }
 
 // ===== parse: "7DA2100FF7900000000" -> bytes[8]
@@ -30,13 +58,6 @@ static bool parseCAN8(const String& s, uint8_t bytes[8]) {
   if (!s.startsWith("7DA")) return false;
 
   int p = 3;
-  auto hexNib = [](char c) -> int {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    return -1;
-  };
-
   for (int i = 0; i < 8; i++) {
     int hi = hexNib(s[p++]);
     int lo = hexNib(s[p++]);
@@ -94,16 +115,14 @@ static bool isComplete() {
 }
 
 static bool isOurDid() {
-  // מצפה: 62 1F 9A ...
   return (expectedLen >= 3 && payload[0] == 0x62 && payload[1] == 0x1F && payload[2] == 0x9A);
 }
 
-// הזרם ב payload[7..8]
 static bool extractCurrent(float &amps) {
   if (!isComplete() || !isOurDid()) return false;
   if (expectedLen < 9) return false;
 
-  int16_t raw = (int16_t)((payload[7] << 8) | payload[8]); // XXYY
+  int16_t raw = (int16_t)((payload[7] << 8) | payload[8]);
   amps = (float)raw * 0.1f;
   return true;
 }
@@ -134,7 +153,6 @@ void elmInitLikeApp() {
 void lcdShow(bool connected) {
   bool hasData = (millis() - lastDataMs) < 1500;
 
-  // שורה 1: זרם
   lcd.setCursor(0, 0);
   if (hasData) {
     char buf[9];
@@ -144,7 +162,6 @@ void lcdShow(bool connected) {
     lcd.print("I:--.-A ");
   }
 
-  // שורה 2: מצב + BT
   lcd.setCursor(0, 1);
   if (!connected) {
     lcd.print("NO LINK ");
@@ -161,7 +178,6 @@ void lcdShow(bool connected) {
   else                  lcd.print("IDLE  OK");
 }
 
-// מנסה להתחבר ל-OBD עד שמצליח. מחזיר true כשמחובר.
 bool connectOBD() {
   int attempt = 0;
   while (true) {
@@ -198,9 +214,8 @@ void setup() {
   lcd.setCursor(0, 0);
   lcd.print("ESP32OBD");
 
-  // BT init
   SerialBT.begin("ESP32-OBD", true);
-  SerialBT.setPin("3080");
+  SerialBT.setPin("3080", 4);
 
   connectOBD();
 
@@ -220,7 +235,6 @@ void setup() {
 void loop() {
   static uint32_t lastReq = 0;
 
-  // אם נותק - מתחבר מחדש
   if (!SerialBT.connected()) {
     Serial.println("BT disconnected! Reconnecting...");
     lcdShow(false);
@@ -240,7 +254,6 @@ void loop() {
     return;
   }
 
-  // אם מחובר אבל אין דאטה כבר 8 שניות - אתחל ELM מחדש
   if (lastDataMs > 0 && (millis() - lastDataMs > 8000) && (millis() - lastElmInit > 15000)) {
     Serial.println("No data for 8s, re-initializing ELM...");
     lcd.clear();
@@ -257,7 +270,6 @@ void loop() {
     return;
   }
 
-  // אם עדיין לא קיבלנו דאטה בכלל אחרי 10 שניות מאתחול
   if (lastDataMs == 0 && lastElmInit > 0 && (millis() - lastElmInit > 10000)) {
     Serial.println("Never got data after init, re-initializing ELM...");
     lcd.clear();
@@ -273,13 +285,11 @@ void loop() {
     return;
   }
 
-  // פולינג
   if (millis() - lastReq > 50) {
     lastReq = millis();
     SerialBT.print("221F9A2\r");
   }
 
-  // קריאה
   while (SerialBT.available()) {
     char c = (char)SerialBT.read();
 
@@ -313,7 +323,6 @@ void loop() {
     }
   }
 
-  // עדכון LCD
   static uint32_t lastUi = 0;
   if (millis() - lastUi > 50) {
     lastUi = millis();

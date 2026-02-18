@@ -2,9 +2,16 @@
  * ESP32 OBD-II HV Battery Current Monitor (Arduino IDE version)
  *
  * Board: ESP32 Dev Module
+ * LCD: 1602 I2C
  * Libraries required:
  *   - LiquidCrystal_I2C (by Frank de Brabander)
  *   - BluetoothSerial (built-in with ESP32 board package)
+ *
+ * Wiring (ESP32 -> LCD 1602 I2C):
+ *   SDA -> GPIO 21
+ *   SCL -> GPIO 22
+ *   VCC -> 5V
+ *   GND -> GND
  */
 
 #include <BluetoothSerial.h>
@@ -223,7 +230,6 @@ void setup() {
 void loop() {
   static uint32_t lastReq = 0;
 
-  // אם נותק - מתחבר מחדש
   if (!SerialBT.connected()) {
     Serial.println("BT disconnected! Reconnecting...");
     lcdShow(false);
@@ -243,7 +249,6 @@ void loop() {
     return;
   }
 
-  // אם מחובר אבל אין דאטה כבר 8 שניות - אתחל ELM מחדש
   if (lastDataMs > 0 && (millis() - lastDataMs > 8000) && (millis() - lastElmInit > 15000)) {
     Serial.println("No data for 8s, re-initializing ELM...");
     lcd.clear();
@@ -260,7 +265,6 @@ void loop() {
     return;
   }
 
-  // אם עדיין לא קיבלנו דאטה בכלל אחרי 10 שניות מאתחול
   if (lastDataMs == 0 && lastElmInit > 0 && (millis() - lastElmInit > 10000)) {
     Serial.println("Never got data after init, re-initializing ELM...");
     lcd.clear();
@@ -276,13 +280,11 @@ void loop() {
     return;
   }
 
-  // פולינג
   if (millis() - lastReq > 50) {
     lastReq = millis();
     SerialBT.print("221F9A2\r");
   }
 
-  // קריאה
   while (SerialBT.available()) {
     char c = (char)SerialBT.read();
 
@@ -316,7 +318,6 @@ void loop() {
     }
   }
 
-  // עדכון LCD
   static uint32_t lastUi = 0;
   if (millis() - lastUi > 50) {
     lastUi = millis();
